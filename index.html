@@ -376,6 +376,7 @@
                 submitButton.textContent = 'Check In';
                 
                 formFields.innerHTML = `
+                    ${createNumberField('NAME', 'NAME:', '', true)}
                     ${createNumberField('mileage_before', 'Mileage Before Trip:', 'e.g., 45120', true)}
                     ${createRadioField('driver', 'Are you the designated driver?', ['Yes', 'No'], 'Yes', true)}
                     ${createTextAreaField('damage_report', 'Visible Damage Report (if any):', 'Describe scratches, dents, etc.')}
@@ -630,4 +631,5 @@
     </script>
 </body>
 </html>
+
 
