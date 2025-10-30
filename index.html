@@ -142,16 +142,7 @@
 
         // --- GLOBAL CONFIG & STATE ---
         
-        // --- IMPORTANT ---
-        // These variables are INJECTED by the environment.
-        // DO NOT CHANGE THEM.
-        const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // --- END IMPORTANT ---
-
-        let db, auth;
-        let userId = null;
+       npm install firebase
         let vehicleId = null;
         let currentUserStatus = 'out'; // Default: user is checked out
         let isAuthReady = false;
@@ -575,3 +566,4 @@
     </script>
 </body>
 </html>
+
