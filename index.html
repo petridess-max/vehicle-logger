@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Check-In/Out</title>
+    <!-- Import Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Import Inter font -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Import Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom styles for loading spinner */
+        .loader {
+            border-top-color: #3498db;
+            -webkit-animation: spin 1s linear infinite;
+            animation: spin 1s linear infinite;
+        }
+        @-webkit-keyframes spin {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen antialiased">
+
+    <!-- Main Application Container -->
+    <div id="app-container" class="max-w-lg mx-auto p-4 bg-white min-h-screen shadow-md md:rounded-lg md:mt-4">
+
+        <!-- Header -->
+        <header class="flex items-center justify-between pb-4 border-b border-gray-200">
+            <h1 class="text-2xl font-bold text-gray-800">Vehicle Logger</h1>
+            <i class="ph ph-car text-3xl text-blue-600"></i>
+        </header>
+
+        <!-- Loading State -->
+        <div id="loading-state" class="flex flex-col items-center justify-center py-20">
+            <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4"></div>
+            <p class="text-gray-500 font-medium">Connecting to service...</p>
+        </div>
+
+        <!-- Error State (e.g., no vehicle ID) -->
+        <div id="error-state" class="hidden flex-col items-center justify-center py-20 text-center">
+            <i class="ph ph-qr-code text-6xl text-red-500 mb-4"></i>
+            <h2 class="text-xl font-semibold text-gray-800 mb-2">Invalid QR Code</h2>
+            <p id="error-message" class="text-gray-600">Please scan a valid vehicle QR code to begin.</p>
+        </div>
+
+        <!-- Main Content (Hidden by default) -->
+        <main id="main-content" class="hidden">
+            
+            <!-- User Info -->
+            <div class="my-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-sm text-blue-700">
+                    <span class="font-semibold">Your User ID:</span>
+                    <code id="user-id-display" class="block text-xs bg-blue-100 p-1 rounded mt-1 break-all">...</code>
+                </p>
+            </div>
+
+            <!-- Vehicle & Status -->
+            <div class="mb-6">
+                <h2 class="text-lg font-semibold text-gray-700">Vehicle</h2>
+                <p id="vehicle-id-display" class="text-3xl font-bold text-blue-600">...</p>
+                <div class="mt-2">
+                    <p class="text-gray-600">You are currently:</p>
+                    <p id="status-display" class="text-2xl font-bold">...</p>
+                </div>
+            </div>
+
+            <!-- Questionnaire Form -->
+            <form id="questionnaire-form" class="space-y-4">
+                <h3 id="form-title" class="text-xl font-semibold text-gray-800 border-b pb-2">...</h3>
+                
+                <!-- Dynamic form fields will be injected here -->
+                <div id="form-fields" class="space-y-4 pt-2"></div>
+
+                <!-- Submit Button -->
+                <button type="submit" id="submit-button" class="w-full bg-blue-600 text-white font-bold py-3 px-4 rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    Submit
+                </button>
+            </form>
+
+            <!-- Custom Message Box -->
+            <div id="message-box" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4">
+                <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                    <i id="message-icon" class="text-5xl mb-4"></i>
+                    <h3 id="message-title" class="text-xl font-bold mb-2"></h3>
+                    <p id="message-text" class="text-gray-600 mb-6"></p>
+                    <button id="message-close-btn" class="bg-blue-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
+                        OK
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Vehicle History -->
+            <div class="mt-10">
+                <h3 class="text-xl font-semibold text-gray-800 border-b pb-2 mb-4">Vehicle History</h3>
+                <div id="history-loading" class="text-center text-gray-500">
+                    <p>Loading history...</p>
+                </div>
+                <ul id="history-list" class="space-y-3">
+                    <!-- History items will be injected here -->
+                </ul>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Firebase SDK Imports -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { 
+            getAuth, 
+            signInAnonymously, 
+            signInWithCustomToken, 
+            onAuthStateChanged 
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc, 
+            addDoc, 
+            collection, 
+            query, 
+            where, 
+            onSnapshot, 
+            serverTimestamp,
+            setLogLevel
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- GLOBAL CONFIG & STATE ---
+        
+        // --- IMPORTANT ---
+        // These variables are INJECTED by the environment.
+        // DO NOT CHANGE THEM.
+        const firebaseConfigStr = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        // --- END IMPORTANT ---
+
+        let db, auth;
+        let userId = null;
+        let vehicleId = null;
+        let currentUserStatus = 'out'; // Default: user is checked out
+        let isAuthReady = false;
+        let historyUnsubscribe = null; // To detach Firestore listener
+
+        // Firestore paths (public data)
+        const statusCollectionPath = `/artifacts/${appId}/public/data/vehicleStatus`;
+        const logsCollectionPath = `/artifacts/${appId}/public/data/vehicleLogs`;
+
+        // DOM Elements
+        const loadingState = document.getElementById('loading-state');
+        const errorState = document.getElementById('error-state');
+        const errorMessage = document.getElementById('error-message');
+        const mainContent = document.getElementById('main-content');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const vehicleIdDisplay = document.getElementById('vehicle-id-display');
+        const statusDisplay = document.getElementById('status-display');
+        const form = document.getElementById('questionnaire-form');
+        const formTitle = document.getElementById('form-title');
+        const formFields = document.getElementById('form-fields');
+        const submitButton = document.getElementById('submit-button');
+        const historyLoading = document.getElementById('history-loading');
+        const historyList = document.getElementById('history-list');
+
+        // Message Box Elements
+        const messageBox = document.getElementById('message-box');
+        const messageIcon = document.getElementById('message-icon');
+        const messageTitle = document.getElementById('message-title');
+        const messageText = document.getElementById('message-text');
+        const messageCloseBtn = document.getElementById('message-close-btn');
+
+        // --- INITIALIZATION ---
+
+        /**
+         * Initializes the application on page load.
+         */
+        function init() {
+            try {
+                const firebaseConfig = JSON.parse(firebaseConfigStr);
+                if (!firebaseConfig.apiKey) {
+                    throw new Error("Firebase config is missing or invalid.");
+                }
+
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                // Enable debug logging for Firestore
+                setLogLevel('debug');
+
+                setupAuthListener();
+                form.addEventListener('submit', handleSubmit);
+                messageCloseBtn.addEventListener('click', () => messageBox.classList.add('hidden'));
+
+            } catch (err) {
+                console.error("Initialization Error:", err);
+                showError(`Initialization failed: ${err.message}. Please refresh.`);
+            }
+        }
+
+        /**
+         * Sets up the Firebase authentication listener.
+         */
+        async function setupAuthListener() {
+            try {
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (authError) {
+                console.error("Authentication Error:", authError);
+                showError("Could not sign you in. Please check your connection.");
+                return;
+            }
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    isAuthReady = true;
+                    userId = user.uid;
+                    userIdDisplay.textContent = userId;
+                    
+                    // Auth is ready, now check for vehicle
+                    handleVehicleSetup();
+                } else {
+                    isAuthReady = false;
+                    userId = null;
+                    showError("Authentication lost. Please refresh the page.");
+                }
+            });
+        }
+        
+        /**
+         * Gets Vehicle ID from URL and fetches user status.
+         */
+        function handleVehicleSetup() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                vehicleId = params.get('vehicleId');
+
+                if (!vehicleId) {
+                    throw new Error("No vehicleId found in URL. Please scan a vehicle QR code.");
+                }
+
+                // Valid Vehicle ID found
+                vehicleIdDisplay.textContent = vehicleId;
+                loadingState.classList.add('hidden');
+                mainContent.classList.remove('hidden');
+
+                // Fetch the user's current status for this vehicle
+                fetchCurrentUserStatus();
+                
+                // Start listening for history updates
+                listenToVehicleHistory();
+
+            } catch (err) {
+                console.error("Vehicle Setup Error:", err);
+                showError(err.message);
+            }
+        }
+
+        // --- CORE LOGIC ---
+
+        /**
+         * Fetches the user's last known status for the current vehicle.
+         */
+        async function fetchCurrentUserStatus() {
+            if (!isAuthReady || !vehicleId) return;
+
+            const statusDocId = `${vehicleId}_${userId}`;
+            const statusDocRef = doc(db, statusCollectionPath, statusDocId);
+
+            try {
+                const docSnap = await getDoc(statusDocRef);
+
+                if (docSnap.exists() && docSnap.data().status === 'in') {
+                    currentUserStatus = 'in';
+                } else {
+                    // Default to 'out' if doc doesn't exist or status is 'out'
+                    currentUserStatus = 'out';
+                }
+                
+                updateUIForStatus();
+
+            } catch (err) {
+                console.error("Error fetching user status:", err);
+                showError("Could not get your current status. Please try again.");
+                submitButton.disabled = true;
+            }
+        }
+
+        /**
+         * Updates the form and status display based on currentUserStatus.
+         */
+        function updateUIForStatus() {
+            if (currentUserStatus === 'in') {
+                statusDisplay.textContent = 'CHECKED IN';
+                statusDisplay.className = 'text-2xl font-bold text-green-600';
+                renderQuestionnaire('out');
+            } else {
+                statusDisplay.textContent = 'CHECKED OUT';
+                statusDisplay.className = 'text-2xl font-bold text-red-600';
+                renderQuestionnaire('in');
+            }
+        }
+
+        /**
+         * Renders the correct questionnaire (in or out).
+         * @param {'in' | 'out'} type - The type of form to render.
+         */
+        function renderQuestionnaire(type) {
+            formFields.innerHTML = ''; // Clear old fields
+
+            if (type === 'in') {
+                formTitle.textContent = 'Check-In Form';
+                submitButton.textContent = 'Check In';
+                
+                formFields.innerHTML = `
+                    ${createNumberField('mileage_before', 'Mileage Before Trip:', 'e.g., 45120', true)}
+                    ${createRadioField('driver', 'Are you the designated driver?', ['Yes', 'No'], 'Yes', true)}
+                    ${createTextAreaField('damage_report', 'Visible Damage Report (if any):', 'Describe scratches, dents, etc.')}
+                `;
+
+            } else { // type === 'out'
+                formTitle.textContent = 'Check-Out Form';
+                submitButton.textContent = 'Check Out';
+                
+                formFields.innerHTML = `
+                    ${createNumberField('mileage_after', 'Mileage After Trip:', 'e.g., 45200', true)}
+                    ${createSelectField('fuel_level', 'Fuel Level:', ['Full', '3/4', '1/2', '1/4', 'Empty'], 'Full', true)}
+                    ${createTextAreaField('new_issues', 'New Issues/Damage Report (if any):', 'Report new issues, engine lights, etc.')}
+                `;
+            }
+        }
+        
+        /**
+         * Handles the form submission for check-in or check-out.
+         */
+        async function handleSubmit(e) {
+            e.preventDefault();
+            if (submitButton.disabled) return;
+            
+            submitButton.disabled = true;
+            submitButton.textContent = 'Submitting...';
+
+            const formData = new FormData(form);
+            const answers = Object.fromEntries(formData.entries());
+            const newStatus = (currentUserStatus === 'in') ? 'out' : 'in';
+
+            try {
+                // 1. Add a new log entry
+                await addDoc(collection(db, logsCollectionPath), {
+                    userId,
+                    vehicleId,
+                    status: newStatus,
+                    timestamp: serverTimestamp(),
+                    answers: answers
+                });
+
+                // 2. Update the user's current status for this vehicle
+                const statusDocId = `${vehicleId}_${userId}`;
+                const statusDocRef = doc(db, statusCollectionPath, statusDocId);
+                await setDoc(statusDocRef, {
+                    userId,
+                    vehicleId,
+                    status: newStatus,
+                    lastUpdate: serverTimestamp()
+                });
+
+                // 3. Update UI
+                currentUserStatus = newStatus;
+                updateUIForStatus();
+                form.reset();
+                
+                showMessageBox(
+                    'success', 
+                    'Success!', 
+                    `You have been successfully ${newStatus === 'in' ? 'checked in' : 'checked out'}.`
+                );
+
+            } catch (err) {
+                console.error("Error submitting form:", err);
+                showMessageBox('error', 'Submission Failed', 'Could not save your entry. Please try again.');
+            } finally {
+                submitButton.disabled = false;
+                // Text content will be reset by updateUIForStatus()
+            }
+        }
+
+        // --- HISTORY LISTENER ---
+
+        /**
+         * Listens for real-time updates to the vehicle's log.
+         */
+        function listenToVehicleHistory() {
+            if (historyUnsubscribe) {
+                historyUnsubscribe(); // Detach old listener
+            }
+            if (!vehicleId) return;
+
+            const q = query(collection(db, logsCollectionPath), where('vehicleId', '==', vehicleId));
+
+            historyUnsubscribe = onSnapshot(q, (querySnapshot) => {
+                historyLoading.classList.add('hidden');
+                let logs = [];
+                querySnapshot.forEach((doc) => {
+                    logs.push({ id: doc.id, ...doc.data() });
+                });
+                
+                // Sort in JavaScript to avoid Firestore index issues
+                logs.sort((a, b) => {
+                    const timeA = a.timestamp?.seconds || 0;
+                    const timeB = b.timestamp?.seconds || 0;
+                    return timeB - timeA; // Descending order (newest first)
+                });
+
+                renderHistory(logs);
+
+            }, (err) => {
+                console.error("Error listening to history:", err);
+                historyLoading.textContent = "Could not load history.";
+            });
+        }
+
+        /**
+         * Renders the list of history items.
+         * @param {Array} logs - The sorted array of log objects.
+         */
+        function renderHistory(logs) {
+            historyList.innerHTML = '';
+            if (logs.length === 0) {
+                historyList.innerHTML = '<li class="text-gray-500 text-center">No history found for this vehicle.</li>';
+                return;
+            }
+
+            logs.forEach(log => {
+                const li = document.createElement('li');
+                li.className = 'p-3 bg-gray-50 border border-gray-200 rounded-lg';
+                
+                const time = log.timestamp ? new Date(log.timestamp.seconds * 1000).toLocaleString() : 'Just now';
+                const statusClass = log.status === 'in' ? 'text-green-600' : 'text-red-600';
+                const statusIcon = log.status === 'in' ? 'ph-sign-in' : 'ph-sign-out';
+                const statusText = log.status === 'in' ? 'Checked In' : 'Checked Out';
+
+                li.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center space-x-2">
+                            <i class="ph ${statusIcon} ${statusClass} text-xl"></i>
+                            <span class="font-bold ${statusClass}">${statusText}</span>
+                        </div>
+                        <span class="text-xs text-gray-500">${time}</span>
+                    </div>
+                    <p class="text-xs text-gray-600 truncate">
+                        <span class="font-medium">User:</span> ${log.userId}
+                    </p>
+                `;
+                historyList.appendChild(li);
+            });
+        }
+
+
+        // --- UI & UTILITY HELPERS ---
+
+        /**
+         * Displays the main error state.
+         * @param {string} message - The error message to show.
+         */
+        function showError(message) {
+            loadingState.classList.add('hidden');
+            mainContent.classList.add('hidden');
+            errorMessage.textContent = message;
+            errorState.classList.remove('hidden');
+        }
+
+        /**
+         * Shows a custom modal message box.
+         * @param {'success' | 'error'} type - The type of message.
+         * @param {string} title - The title of the message.
+         * @param {string} text - The body text of the message.
+         */
+        function showMessageBox(type, title, text) {
+            if (type === 'success') {
+                messageIcon.className = 'ph ph-check-circle text-5xl mb-4 text-green-500';
+                messageCloseBtn.className = 'bg-green-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-green-700 transition-colors';
+            } else { // 'error'
+                messageIcon.className = 'ph ph-x-circle text-5xl mb-4 text-red-500';
+                messageCloseBtn.className = 'bg-red-600 text-white font-semibold py-2 px-6 rounded-lg hover:bg-red-700 transition-colors';
+            }
+            messageTitle.textContent = title;
+            messageText.textContent = text;
+            messageBox.classList.remove('hidden');
+        }
+
+        // --- FORM FIELD GENERATORS ---
+
+        function createLabel(name, text, isRequired) {
+            return `<label for="${name}" class="block text-sm font-medium text-gray-700">${text} ${isRequired ? '<span class="text-red-500">*</span>' : ''}</label>`;
+        }
+
+        function createNumberField(name, label, placeholder, isRequired = false) {
+            return `
+                <div>
+                    ${createLabel(name, label, isRequired)}
+                    <input type="number" id="${name}" name="${name}" ${isRequired ? 'required' : ''}
+                           class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                           placeholder="${placeholder}">
+                </div>
+            `;
+        }
+
+        function createTextAreaField(name, label, placeholder, isRequired = false) {
+            return `
+                <div>
+                    ${createLabel(name, label, isRequired)}
+                    <textarea id="${name}" name="${name}" rows="3" ${isRequired ? 'required' : ''}
+                              class="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
+                              placeholder="${placeholder}"></textarea>
+                </div>
+            `;
+        }
+        
+        function createRadioField(name, label, options, defaultValue, isRequired = false) {
+            const optionsHtml = options.map(option => `
+                <label class="flex items-center space-x-2">
+                    <input type="radio" name="${name}" value="${option}" 
+                           class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"
+                           ${option === defaultValue ? 'checked' : ''} ${isRequired ? 'required' : ''}>
+                    <span class="text-gray-700">${option}</span>
+                </label>
+            `).join('');
+
+            return `
+                <div>
+                    ${createLabel(name, label, isRequired)}
+                    <fieldset class="mt-2 space-y-2">
+                        ${optionsHtml}
+                    </fieldset>
+                </div>
+            `;
+        }
+        
+        function createSelectField(name, label, options, defaultValue, isRequired = false) {
+            const optionsHtml = options.map(option => `
+                <option value="${option}" ${option === defaultValue ? 'selected' : ''}>${option}</option>
+            `).join('');
+            
+            return `
+                <div>
+                    ${createLabel(name, label, isRequired)}
+                    <select id="${name}" name="${name}" ${isRequired ? 'required' : ''}
+                            class="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md">
+                        ${optionsHtml}
+                    </select>
+                </div>
+            `;
+        }
+
+        // --- START APP ---
+        document.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
