@@ -46,7 +46,8 @@
         <!-- Loading State -->
         <div id="loading-state" class="flex flex-col items-center justify-center py-20">
             <div class="loader ease-linear rounded-full border-4 border-t-4 border-gray-200 h-12 w-12 mb-4"></div>
-            <p class="text-gray-500 font-medium">Connecting to service...</p>
+            <!-- This ID is important for debugging -->
+            <p id="loading-text" class="text-gray-500 font-medium">Connecting to service...</p>
         </div>
 
         <!-- Error State (e.g., no vehicle ID) -->
@@ -123,7 +124,6 @@
         import { 
             getAuth, 
             signInAnonymously, 
-            signInWithCustomToken, 
             onAuthStateChanged 
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { 
@@ -140,20 +140,41 @@
             setLogLevel
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- GLOBAL CONFIG & STATE ---
+        // --- START Firebase Config ---
+        //
+        // This is YOUR Firebase project configuration.
+        //
+        const firebaseConfig = {
+            apiKey: "AIzaSyCfBu92Sze80DpmschikKJbP-fAK_RlznM",
+            authDomain: "vehicle-logger-app-d03d9.firebaseapp.com",
+            projectId: "vehicle-logger-app-d03d9",
+            storageBucket: "vehicle-logger-app-d03d9.firebasestorage.app",
+            messagingSenderId: "933432541337",
+            appId: "1:933432541337:web:5b930539c704cd21f7f808"
+        };
+        //
+        // -----------------------------------------------------------------------------
         
-       npm install firebase
+        // --- End Firebase Config ---
+
+
+        // We will define appId *after* checking the config
+        let appId;
+        
+        let db, auth;
+        let userId = null;
         let vehicleId = null;
         let currentUserStatus = 'out'; // Default: user is checked out
         let isAuthReady = false;
         let historyUnsubscribe = null; // To detach Firestore listener
 
-        // Firestore paths (public data)
-        const statusCollectionPath = `/artifacts/${appId}/public/data/vehicleStatus`;
-        const logsCollectionPath = `/artifacts/${appId}/public/data/vehicleLogs`;
+        // Firestore paths (will be set in init)
+        let statusCollectionPath;
+        let logsCollectionPath;
 
         // DOM Elements
         const loadingState = document.getElementById('loading-state');
+        const loadingText = document.getElementById('loading-text');
         const errorState = document.getElementById('error-state');
         const errorMessage = document.getElementById('error-message');
         const mainContent = document.getElementById('main-content');
@@ -180,22 +201,40 @@
          * Initializes the application on page load.
          */
         function init() {
+            console.log("App init() started.");
+            loadingText.textContent = "Initializing app...";
             try {
-                const firebaseConfig = JSON.parse(firebaseConfigStr);
-                if (!firebaseConfig.apiKey) {
-                    throw new Error("Firebase config is missing or invalid.");
+                // Check if firebaseConfig was pasted
+                if (typeof firebaseConfig === 'undefined' || !firebaseConfig.apiKey) {
+                    console.error("Firebase config is missing or invalid.");
+                    showError("Firebase config is missing or invalid. Please paste it into index.html.");
+                    return;
                 }
+                
+                console.log("Firebase config found. Project ID:", firebaseConfig.projectId);
+                appId = firebaseConfig.projectId; // Define appId here
+
+                // Define paths now that we have appId
+                statusCollectionPath = `/artifacts/${appId}/public/data/vehicleStatus`;
+                logsCollectionPath = `/artifacts/${appId}/public/data/vehicleLogs`;
 
                 const app = initializeApp(firebaseConfig);
+                console.log("Firebase app initialized.");
+                
                 db = getFirestore(app);
+                console.log("Firestore service initialized.");
+                
                 auth = getAuth(app);
+                console.log("Auth service initialized.");
                 
                 // Enable debug logging for Firestore
                 setLogLevel('debug');
 
-                setupAuthListener();
                 form.addEventListener('submit', handleSubmit);
                 messageCloseBtn.addEventListener('click', () => messageBox.classList.add('hidden'));
+
+                console.log("Calling setupAuthListener()...");
+                setupAuthListener();
 
             } catch (err) {
                 console.error("Initialization Error:", err);
@@ -207,30 +246,35 @@
          * Sets up the Firebase authentication listener.
          */
         async function setupAuthListener() {
-            try {
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (authError) {
-                console.error("Authentication Error:", authError);
-                showError("Could not sign you in. Please check your connection.");
-                return;
-            }
+            console.log("setupAuthListener() called.");
+            loadingText.textContent = "Authenticating...";
 
             onAuthStateChanged(auth, (user) => {
                 if (user) {
+                    // User is already signed in
+                    console.log("onAuthStateChanged: User is signed in.", user.uid);
                     isAuthReady = true;
                     userId = user.uid;
                     userIdDisplay.textContent = userId;
                     
-                    // Auth is ready, now check for vehicle
+                    console.log("Auth is ready. Calling handleVehicleSetup().");
                     handleVehicleSetup();
                 } else {
+                    // User is signed out, so sign them in anonymously
+                    console.log("onAuthStateChanged: User is signed out. Attempting anonymous sign-in...");
+                    loadingText.textContent = "Signing in...";
                     isAuthReady = false;
                     userId = null;
-                    showError("Authentication lost. Please refresh the page.");
+                    
+                    signInAnonymously(auth)
+                        .then(() => {
+                            console.log("signInAnonymously() successful. onAuthStateChanged will run again with the new user.");
+                            // The onAuthStateChanged listener will automatically run again
+                        })
+                        .catch((error) => {
+                            console.error("Anonymous Sign-In Error:", error);
+                            showError(`Sign-in failed: ${error.message}. Please check Firebase rules and authorized domains.`);
+                        });
                 }
             });
         }
@@ -239,15 +283,19 @@
          * Gets Vehicle ID from URL and fetches user status.
          */
         function handleVehicleSetup() {
+            console.log("handleVehicleSetup() called.");
+            loadingText.textContent = "Getting vehicle data...";
             try {
                 const params = new URLSearchParams(window.location.search);
                 vehicleId = params.get('vehicleId');
 
                 if (!vehicleId) {
+                    console.error("No vehicleId found in URL.");
                     throw new Error("No vehicleId found in URL. Please scan a vehicle QR code.");
                 }
 
                 // Valid Vehicle ID found
+                console.log("Vehicle ID found:", vehicleId);
                 vehicleIdDisplay.textContent = vehicleId;
                 loadingState.classList.add('hidden');
                 mainContent.classList.remove('hidden');
@@ -270,7 +318,11 @@
          * Fetches the user's last known status for the current vehicle.
          */
         async function fetchCurrentUserStatus() {
-            if (!isAuthReady || !vehicleId) return;
+            console.log("Fetching current status for user:", userId, "and vehicle:", vehicleId);
+            if (!isAuthReady || !vehicleId) {
+                console.warn("fetchCurrentUserStatus() called before auth or vehicleId is ready.");
+                return;
+            }
 
             const statusDocId = `${vehicleId}_${userId}`;
             const statusDocRef = doc(db, statusCollectionPath, statusDocId);
@@ -280,9 +332,11 @@
 
                 if (docSnap.exists() && docSnap.data().status === 'in') {
                     currentUserStatus = 'in';
+                    console.log("User status for this vehicle is: IN");
                 } else {
                     // Default to 'out' if doc doesn't exist or status is 'out'
                     currentUserStatus = 'out';
+                    console.log("User status for this vehicle is: OUT");
                 }
                 
                 updateUIForStatus();
@@ -307,6 +361,7 @@
                 statusDisplay.className = 'text-2xl font-bold text-red-600';
                 renderQuestionnaire('in');
             }
+            console.log("UI updated for status:", currentUserStatus);
         }
 
         /**
@@ -347,6 +402,7 @@
             
             submitButton.disabled = true;
             submitButton.textContent = 'Submitting...';
+            console.log("Form submitted.");
 
             const formData = new FormData(form);
             const answers = Object.fromEntries(formData.entries());
@@ -354,6 +410,7 @@
 
             try {
                 // 1. Add a new log entry
+                console.log("Adding new log entry...");
                 await addDoc(collection(db, logsCollectionPath), {
                     userId,
                     vehicleId,
@@ -361,8 +418,10 @@
                     timestamp: serverTimestamp(),
                     answers: answers
                 });
+                console.log("Log entry added.");
 
                 // 2. Update the user's current status for this vehicle
+                console.log("Updating user status document...");
                 const statusDocId = `${vehicleId}_${userId}`;
                 const statusDocRef = doc(db, statusCollectionPath, statusDocId);
                 await setDoc(statusDocRef, {
@@ -371,6 +430,7 @@
                     status: newStatus,
                     lastUpdate: serverTimestamp()
                 });
+                console.log("User status document updated.");
 
                 // 3. Update UI
                 currentUserStatus = newStatus;
@@ -402,10 +462,12 @@
                 historyUnsubscribe(); // Detach old listener
             }
             if (!vehicleId) return;
+            console.log("Setting up history snapshot listener for vehicle:", vehicleId);
 
             const q = query(collection(db, logsCollectionPath), where('vehicleId', '==', vehicleId));
 
             historyUnsubscribe = onSnapshot(q, (querySnapshot) => {
+                console.log("History snapshot received.");
                 historyLoading.classList.add('hidden');
                 let logs = [];
                 querySnapshot.forEach((doc) => {
@@ -471,6 +533,8 @@
          * @param {string} message - The error message to show.
          */
         function showError(message) {
+            console.error("showError called with message:", message);
+            loadingText.textContent = "Error!";
             loadingState.classList.add('hidden');
             mainContent.classList.add('hidden');
             errorMessage.textContent = message;
@@ -531,7 +595,7 @@
                            class="focus:ring-blue-500 h-4 w-4 text-blue-600 border-gray-300"
                            ${option === defaultValue ? 'checked' : ''} ${isRequired ? 'required' : ''}>
                     <span class="text-gray-700">${option}</span>
-                </label>
+                </labels>
             `).join('');
 
             return `
